@@ -47,19 +47,23 @@ jobs:
     - name: Run script
       run: python ../main.py
       working-directory: ./rule/
-    - name: Commit and push config.json
-      run: |
-        git config --global user.email "action@github.com"
-        git config --global user.name "GitHub Action"
-        git add ./rule/*.json
-        git add ./rule/*.srs
-        git add ./rule/*.txt
+      - name: Commit and push config.json
+  run: |
+    git config --global user.email "action@github.com"
+    git config --global user.name "GitHub Action"
+    git add ./rule/*.json
+    git add ./rule/*.srs
+    git add ./rule/*.list
+    git add ./rule/*.txt
 
-        # 检查是否有文件被修改
-        if git diff --staged --quiet; then
-          echo "No changes to commit"
-          exit 0
-        else
+    # 检查是否有文件被修改
+    if git diff --staged --quiet; then
+      echo "No changes to commit"
+      exit 0
+    else
+      git commit -m "Update rules"
+      git push
+    fi
           git commit -m "Update rules"
           git push
         fi
