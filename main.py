@@ -15,6 +15,29 @@ MAP_DICT = {'DOMAIN-SUFFIX': 'domain_suffix', 'HOST-SUFFIX': 'domain_suffix', 'h
             'IP6-CIDR': 'ip_cidr','SRC-IP-CIDR': 'source_ip_cidr', 'GEOIP': 'geoip', 'DST-PORT': 'port',
             'SRC-PORT': 'source_port', "URL-REGEX": "domain_regex", "DOMAIN-REGEX": "domain_regex"}
 
+# Surge 规则类型映射
+SURGE_MAP = {
+    'DOMAIN': 'DOMAIN',
+    'HOST': 'DOMAIN',
+    'host': 'DOMAIN',
+    'DOMAIN-SUFFIX': 'DOMAIN-SUFFIX',
+    'HOST-SUFFIX': 'DOMAIN-SUFFIX',
+    'host-suffix': 'DOMAIN-SUFFIX',
+    'DOMAIN-KEYWORD': 'DOMAIN-KEYWORD',
+    'HOST-KEYWORD': 'DOMAIN-KEYWORD',
+    'host-keyword': 'DOMAIN-KEYWORD',
+    'IP-CIDR': 'IP-CIDR',
+    'ip-cidr': 'IP-CIDR',
+    'IP-CIDR6': 'IP-CIDR6',
+    'IP6-CIDR': 'IP-CIDR6',
+    'SRC-IP-CIDR': 'SRC-IP-CIDR',
+    'GEOIP': 'GEOIP',
+    'DST-PORT': 'DEST-PORT',
+    'SRC-PORT': 'SRC-PORT',
+    'URL-REGEX': 'URL-REGEX',
+    'DOMAIN-REGEX': 'URL-REGEX'
+}
+
 def read_yaml_from_url(url):
     headers = {'User-Agent': 'Mozilla/5.0'}
     response = requests.get(url, headers=headers)
@@ -119,18 +142,44 @@ def sort_dict(obj):
     else:
         return obj
 
+def generate_surge_rule(df, output_file):
+    """将规则 DataFrame 输出为 Surge .list 格式。"""
+    rules = set()
+
+    for _, row in df.iterrows():
+        pattern = str(row.get('pattern', '')).strip()
+        address = str(row.get('address', '')).strip()
+
+        if not pattern or not address or pattern == 'nan' or address == 'nan':
+            continue
+
+        surge_type = SURGE_MAP.get(pattern)
+        if surge_type:
+            rules.add(f'{surge_type},{address}')
+
+    with open(output_file, 'w', encoding='utf-8') as output_file_handle:
+        for rule in sorted(rules):
+            output_file_handle.write(rule + '\n')
+
 def parse_list_file(link, output_directory):
     try:
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            results= list(executor.map(parse_and_convert_to_dataframe, [link]))  # 使用executor.map并行处理链接, 得到(df, rules)元组的列表
+            results = list(executor.map(parse_and_convert_to_dataframe, [link]))  # 使用executor.map并行处理链接, 得到(df, rules)元组的列表
             dfs = [df for df, rules in results]   # 提取df的内容
             rules_list = [rules for df, rules in results]  # 提取逻辑规则rules的内容
             df = pd.concat(dfs, ignore_index=True)  # 拼接为一个DataFrame
-        df = df[~df['pattern'].str.contains('#')].reset_index(drop=True)  # 删除pattern中包含#号的行
+        df = df[~df['pattern'].str.contains('#', na=False)].reset_index(drop=True)  # 删除pattern中包含#号的行
         df = df[df['pattern'].isin(MAP_DICT.keys())].reset_index(drop=True)  # 删除不在字典中的pattern
         df = df.drop_duplicates().reset_index(drop=True)  # 删除重复行
-        df['pattern'] = df['pattern'].replace(MAP_DICT)  # 替换pattern为字典中的值
         os.makedirs(output_directory, exist_ok=True)  # 创建自定义文件夹
+
+        # 先使用原始规则类型生成 Surge .list，避免被 sing-box 字段覆盖
+        base_name = os.path.basename(link).split('.')[0]
+        surge_file_name = os.path.join(output_directory, f'{base_name}.list')
+        generate_surge_rule(df, surge_file_name)
+
+        # 以下继续生成 sing-box JSON
+        df['pattern'] = df['pattern'].replace(MAP_DICT)  # 替换pattern为字典中的值
 
         result_rules = {"version": 2, "rules": []}
         domain_entries = []
@@ -156,26 +205,26 @@ def parse_list_file(link, output_directory):
         """
 
         # 使用 output_directory 拼接完整路径
-        file_name = os.path.join(output_directory, f"{os.path.basename(link).split('.')[0]}.json")
+        file_name = os.path.join(output_directory, f'{base_name}.json')
         with open(file_name, 'w', encoding='utf-8') as output_file:
             result_rules_str = json.dumps(sort_dict(result_rules), ensure_ascii=False, indent=2)
             result_rules_str = result_rules_str.replace('\\\\', '\\')
             output_file.write(result_rules_str)
 
-        srs_path = file_name.replace(".json", ".srs")
-        os.system(f"sing-box rule-set compile --output {srs_path} {file_name}")
+        srs_path = file_name.replace('.json', '.srs')
+        os.system(f'sing-box rule-set compile --output {srs_path} {file_name}')
         return file_name
     except Exception as e:
         print(f'获取链接出错，已跳过：{link}，原因：{str(e)}')
         pass
 
 # 读取 links.txt 中的每个链接并生成对应的 JSON 文件
-with open("../links.txt", 'r') as links_file:
+with open('../links.txt', 'r') as links_file:
     links = links_file.read().splitlines()
 
-links = [l for l in links if l.strip() and not l.strip().startswith("#")]
+links = [l for l in links if l.strip() and not l.strip().startswith('#')]
 
-output_dir = "./"
+output_dir = './'
 result_file_names = []
 
 for link in links:
